@@ -1,0 +1,40 @@
+
+"""
+We need to transfer master-horizons from one core to other cores, 
+and these should not do anything in update!(horizon, prob),
+because they are updated as part of the data transfer, as the true
+horizon-update have already taken place in the master-horizon.
+"""
+struct ExternalHorizon{H <: Horizon} <: Horizon
+    subhorizon::H
+    function ExternalHorizon(h::Horizon)
+        @assert !(h isa ExternalHorizon)
+        new{typeof(h)}(h)
+    end
+end
+
+# Forwarded methods
+isadaptive(h::ExternalHorizon) = isadaptive(h.subhorizon)
+getnumperiods(h::ExternalHorizon) = getnumperiods(h.subhorizon)
+getstartduration(h::ExternalHorizon, t::Int) = getstartduration(h.subhorizon, t)
+getendperiodfromduration(h::ExternalHorizon, d::Millisecond) = getendperiodfromduration(h.subhorizon, d)
+getduration(h::ExternalHorizon) = getduration(h.subhorizon)
+gettimedelta(h::ExternalHorizon, t::Int) = gettimedelta(h.subhorizon, t)
+hasoffset(h::ExternalHorizon) = hasoffset(h.subhorizon)
+getoffset(h::ExternalHorizon) = getoffset(h.subhorizon)
+getstarttime(h::ExternalHorizon, t::Int, start::ProbTime) = getstarttime(h.subhorizon, t, start)
+getsubperiods(coarse::ExternalHorizon, fine::Horizon, coarse_t::Int) = getsubperiods(coarse.subhorizon, fine, coarse_t)
+getsubperiods(coarse::Horizon, fine::ExternalHorizon, coarse_t::Int) = getsubperiods(coarse, fine.subhorizon, coarse_t)
+getsubperiods(coarse::ExternalHorizon, fine::ExternalHorizon, coarse_t::Int) = getsubperiods(coarse.subhorizon,fine.subhorizon,coarse_t)
+hasconstantdurations(h::ExternalHorizon) = hasconstantdurations(h.subhorizon)
+mayshiftfrom(h::ExternalHorizon, t::Int) = mayshiftfrom(h.subhorizon, t)
+mustupdate(h::ExternalHorizon, t::Int) = mustupdate(h.subhorizon, t)
+
+build!(h::ExternalHorizon, p::Prob) = build!(h.subhorizon, p)  # TODO: Should do nothing?
+
+# Specialized methods
+update!(::ExternalHorizon, ::ProbTime) = nothing
+
+# New methods
+# TODO: Maybe remove
+external_update!(h::ExternalHorizon, data) = external_update!(h, h.subhorizon, data)
