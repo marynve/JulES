@@ -38,3 +38,48 @@ update!(::ExternalHorizon, ::ProbTime) = nothing
 # New methods
 # TODO: Maybe remove
 external_update!(h::ExternalHorizon, data) = external_update!(h, h.subhorizon, data)
+
+
+"""
+In the JulES model, we would like subsystem models to use same horizon 
+as price prognosis models, but not neccesary the whole horizon. For many systems, 
+the first 2-3 years would be sufficiently long horizon. ShortendHorizon meets
+this need, as it wraps another horison, and only use some of the first periods.
+"""
+struct ShortendHorizon{H <: Horizon} <: Horizon
+    subhorizon::H
+    n:Int
+    function ShortendHorizon(h::Horizon, n::Int)
+        @assert 0 < n <= getnumperiods(h) 
+        new{typeof(h)}(h, n)
+    end
+end
+
+# Forwarded methods
+isadaptive(h::ShortendHorizon) = isadaptive(h.subhorizon)
+getstartduration(h::ShortendHorizon, t::Int) = getstartduration(h.subhorizon, t)
+getendperiodfromduration(h::ShortendHorizon, d::Millisecond) = getendperiodfromduration(h.subhorizon, d)
+getduration(h::ShortendHorizon) = getduration(h.subhorizon)
+gettimedelta(h::ShortendHorizon, t::Int) = gettimedelta(h.subhorizon, t)
+hasoffset(h::ShortendHorizon) = hasoffset(h.subhorizon)
+getoffset(h::ShortendHorizon) = getoffset(h.subhorizon)
+getstarttime(h::ShortendHorizon, t::Int, start::ProbTime) = getstarttime(h.subhorizon, t, start)
+getsubperiods(coarse::ShortendHorizon, fine::Horizon, coarse_t::Int) = getsubperiods(coarse.subhorizon, fine, coarse_t)
+getsubperiods(coarse::Horizon, fine::ShortendHorizon, coarse_t::Int) = getsubperiods(coarse, fine.subhorizon, coarse_t)
+getsubperiods(coarse::ShortendHorizon, fine::ShortendHorizon, coarse_t::Int) = getsubperiods(coarse.subhorizon,fine.subhorizon,coarse_t)
+hasconstantdurations(h::ShortendHorizon) = hasconstantdurations(h.subhorizon)
+mustupdate(h::ShortendHorizon, t::Int) = mustupdate(h.subhorizon, t)
+build!(h::ShortendHorizon, p::Prob) = build!(h.subhorizon, p)
+
+# Specialized methods
+getnumperiods(h::ShortendHorizon) = h.n
+
+function mayshiftfrom(h::ShortendHorizon, t::Int)
+    (future_t, ok) = mayshiftfrom(h.subhorizon, t)
+    if ok && future_t > h.n
+        return (future_t, false)
+    end 
+    return (future_t, ok)
+end
+
+update!(::ShortendHorizon, ::ProbTime) = nothing
