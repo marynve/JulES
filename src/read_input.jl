@@ -1,3 +1,12 @@
+"""
+This file defines the read_input function, which reads all input needed to run JulES.
+
+Users can change the behaviour of the read_input function in several ways: 
+ - Support new dataset formats with register_datasetreader(name, func)
+ - Customize the time resolution with register_horizonbuilder(name, func)
+ 
+"""
+
 # Function registries
 const _JULES_DATASETREADERS = Dict{String, Function}()
 const _JULES_HORIZONBUILDERS = Dict{String, Function}()
@@ -15,6 +24,8 @@ const _JULES_SHORT = "short"
 const _JULES_PARTS = "parts"
 const _JULES_SCENARIOS = "scenarios"
 
+# TODO: Ensure correct types in parsing
+
 # Public API
 function read_input(filepath)
     config = JSON.parsefile(filepath)
@@ -22,6 +33,7 @@ function read_input(filepath)
     ret[_JULES_DATASET] = _read_dataset(config[_JULES_DATASET])
     ret[_JULES_HORIZONS] = _read_horizons(config[_JULES_HORIZONS])
     ret[_JULES_SCENARIOS] = _read_scenarios(config[_JULES_SCENARIOS])
+    #TODO: Add more config
     return ret
 end
 
@@ -65,7 +77,6 @@ function _read_scenarios(config)
     return d
 end
 
-# TODO: Clean up filenames
 function _readdataset_nve_prognosis(args::Dict{String, Any})
     path = args["folder"]
     year = args["scenarioyear"]
@@ -73,6 +84,8 @@ function _readdataset_nve_prognosis(args::Dict{String, Any})
 
     folder_static = joinpath(path, "static_input")
     folder_week = joinpath(path, "Uke_$week", "input")
+
+    # TODO: Clean up filenames
 
     # Aggregated data
     thermal = getelements(JSON.parsefile(joinpath(folder_static, "termisk1.json")), sti_dataset)
@@ -120,8 +133,6 @@ function _buildhorizon_sequential(term, commodity, config)
     duration = config[_COMMODITIES][term]["step"]
 
     int_period = _get_int_period(term, duration, config, commodity)
-
-    int_period = _get_int_period(term, config)
 
     horizon = SequentialHorizon(int_period...)
 

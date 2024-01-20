@@ -35,11 +35,6 @@ build!(h::ExternalHorizon, p::Prob) = build!(h.subhorizon, p)  # TODO: Should do
 # Specialized methods
 update!(::ExternalHorizon, ::ProbTime) = nothing
 
-# New methods
-# TODO: Maybe remove
-external_update!(h::ExternalHorizon, data) = external_update!(h, h.subhorizon, data)
-
-
 """
 In the JulES model, we would like subsystem models to use same horizon 
 as price prognosis models, but not neccesary the whole horizon. For many systems, 
@@ -83,3 +78,10 @@ function mayshiftfrom(h::ShortendHorizon, t::Int)
 end
 
 update!(::ShortendHorizon, ::ProbTime) = nothing
+
+
+# New horizon interface functions in 
+# order to keep remote copies of self in sync
+have_changed(::Horizon) = false
+get_changes(::Horizon) = error()
+set_changes(::Horizon, changes::Dict) = error()
