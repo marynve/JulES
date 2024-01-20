@@ -1,258 +1,318 @@
+# abstract types
+abstract type AbstractJulESOutput end
+abstract type AbstractJulESInput end
+abstract type AbstractJulESProblem end   # interface: solve(p, t) and wait(p)
 
-abstract type JulES_Scenario end
-abstract type JulES_Input end
-abstract type JulES_Output end
-abstract type JulES_PricePrognosisModel end
-abstract type JulES_LongTermSubsystemModel end
-abstract type JulES_StochasticSubsystemModel end
+# system constans
+const JULES_KEY_INPUTS = "inputs"
+const JULES_KEY_TRANSFERS = "transfers"
+const JULES_KEY_SCENARIOS = "scenarios"
+const JULES_KEY_SUBSYSTEMS = "subsystems"
+const JULES_KEY_HORIZONS = "horizons"
+const JULES_KEY_PRICEPROBLEMS = "priceproblems"
+const JULES_KEY_ENDVALUEPROBLEMS = "endvalueproblems"
+const JULES_KEY_PLANNINGPROBLEMS = "planningproblems"
 
-const _JULES_PRICES = "prices"
+# concrete types
 
-function run_jules!(output, input, procs)
-    datasets = spawn_datasets(input, procs)
+#   problems
+mutable struct DefaultPriceProblem <: AbstractJulESProblem
+    long
+    medium
+    short
+    data
+    core
+    scenario
+    long_t
+    medium_t
+    DefaultPriceProblem(scenario, core, data) = _create_default_price_problem(scenario, core, data)
+end
 
-    scenarios = get_scenarios()
+wait(::DefaultPriceProblem) = nothing
 
-    subsystems = get_subsystems()
+# TODO: Add timeings
+function solve(p::DefaultPriceProblem, t)
+    remotecall_wait(update!, p.core, fetch(p.long), t)
+    remotecall_wait(solve!, p.core, fetch(p.long))
+    remotecall_wait(transfer_endvalues, p.core, fetch(p.long), fetch(p.medium), fetch(p.long_t))
+    remotecall_wait(update!, p.core, fetch(p.medium), t)
+    remotecall_wait(solve!, p.core, fetch(p.medium))
+    remotecall_wait(transfer_endvalues, p.core, fetch(p.medium), fetch(p.short), fetch(p.medium_t))
+    remotecall_wait(update!, p.core, fetch(p.short), t)
+    remotecall_wait(solve!, p.core, fetch(p.short))
+    return 
+end
 
-    horizons = get_horizons()
+function transfer_endvalues(pfrom, pto, tfrom)
+    # TODO: Fix, need different inputs
+end
 
-    price_startstates = spawn_price_prognosis()
+#   input and output 
+struct JulESOutput <: AbstractJulESOutput ; data::Dict ; JulESOutput() = Dict() end
+struct JulESInput  <: AbstractJulESInput  ; data::Dict ; JulESInput()  = Dict() end
 
-    price_prognosis = spawn_price_prognosis()
+# TODO: Support default implementation for JulESOutput and JulESInput
 
-    subsystem_endvalues = spawn_subsystem_endvalues()
-
-    clearing_cuts = spawn_clearing_cuts()
-
-    procmaps = get_procmaps(procs, input)
-
-    horizons = spawn_horizons(input, procmaps)
-
-    transfers = spawn_transfers(datasets, procmaps, horizons)
-
-    price_problems = build_price_problems(procmaps, datasets, horizons, transfers)
-
-    endvalue_problems = build_endvalue_problems(procmaps, datasets, horizons, transfers)
-
-    planning_problems = build_planning_problems()
-
-    clearing_problem = build_clearing_problem()
-
-    _init_output(output, problems, datasets, proc_scenarios, horizons, transfers)
-
-    t = _get_simulation_starttime(input)
-    steps = _get_simulation_steps(input)
-    delta = _get_simulation_delta(input)
-
-    for step in 1:steps
-        _solve_step!(output, t, step, delta, datasets, proc_scenarios, horizons, transfers, problems)
+function run_jules(output::AbstractJulESOutput, input::AbstractJulESInput)
+    data = init_data(output, input)
+    problems = init_problems(input, data)
+    (start, N, delta) = get_simulation_period(input)
+    t = start
+    for i in 1:N
+        solve_step(output, data, problems, t, delta, i)
         t += delta
     end
-
     return
 end
 
-
-"""
-Uses input and procs to simulate JulES and writes
-results to output
-"""
-function run_jules!(output, input, procs)
-    datasets = _spawn_datasets(input, procs)
-
-    scenarios = _get_scenarios(input)
-
-    subsystems = _get_subsystems(input)
-
-    proc_scenarios = _get_proc_scenarios(procs, scenarios)
-
-
-    horizons = _spawn_horizons(input, procs, proc_scenarios)
-
-    transfers = _spawn_transfers(input, procs, proc_scenarios, horizons)
-
-    problems = _remotebuild_problems(input, datasets, horizons, transfers)
-
-    _init_output(output, problems, datasets, proc_scenarios, horizons, transfers)
-
-    t = _get_simulation_starttime(input)
-    steps = _get_simulation_steps(input)
-    delta = _get_simulation_delta(input)
-
-    for step in 1:steps
-        _solve_step!(output, t, step, delta, datasets, proc_scenarios, horizons, transfers, problems)
-        t += delta
-    end
-
-    return
+function init_data(output::AbstractJulESOutput, input::AbstractJulESInput)
+    default_init_data(output, input)
 end
 
-"""
-Spawn a copy of the dataset to all procs.
-This will enable us to create many optimization problems
-locally on procs and let them share data. The data sharing
-saves memory, and the local builds is good for performance
-due to less data communication.
-"""
-function _spawn_datasets(input, procs)
-    dataset = input[_JULES_DATASET]
-    datasets = Dict()
-    for p in procs
-        datasets[p] = @spawnat p dataset
-    end
-    return datasets
+function init_problems(input::AbstractJulESInput, data::Dict)
+    default_init_problems(input, data)
 end
 
-"""
-Returns a sequence of historical years.
-
-At the moment we use historical years as scenarios.
-In the future, we should support more general scenarios.
-E.g. we should suppors scenarios being a combination of 
-historical years and e.g. three fuel price levels (high, medium, low).
-"""
-function _get_scenarios(input)
-    startyear = input[_JULES_SCENARIOS]["startyear"]
-    num_years = input[_JULES_SCENARIOS]["num_years"]    
-    return startyear:(startyear + num_years - 1)
+function solve_step(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    default_solve_step(output, data, problems, t, delta, i)
 end
 
-"""
-Allocate scenarios to procs as evenly as possible.
+# Our default implementation
 
-If the number of procs are greater than the 
-number of scenarios, some procs will not be used, and
-those that are used, will hold only one scenario.
-
-If the number of scenarios is greater than the number 
-of procs, then some or all procs will hold more than one 
-scenario.
 """
-function _get_proc_scenarios(procs, scenarios)
-    d = Dict{Int, Vector{Int}}()
-    for (i, s) in enumerate(scenarios)
-        j = (i - 1) % length(procs) + 1
-        p = procs[j]
-        if !haskey(d, p)
-            d[p] = Int[]
-        end
-        push!(d[p], s)
+Call wait on all values in (possibly nested) Dict
+"""
+dictwait(x::Any) = wait(x)
+dictwait(x::Dict) = map(dictwait, values(x))
+
+function default_init_data(output::AbstractJulESOutput, input::AbstractJulESInput)
+    data = Dict()
+
+    data[JULES_KEY_INPUTS] = spawn_inputs(input)
+    data[JULES_KEY_TRANSFERS] = spawn_transfers(input)
+    data[JULES_KEY_HORIZONS] = spawn_horizons(input)
+    data[JULES_KEY_SCENARIOS] = get_scenarios(input)
+    data[JULES_KEY_SUBSYSTEMS] = get_subsystems(input)
+
+    # TODO: Maybe preallocate stuff in output here
+
+    return data
+end
+
+function spawn_inputs(input::AbstractJulESInput)
+    cores = get_cores(input)
+    d = Dict()
+    @sync for core in cores
+        d[core] = @spawnat core input
     end
     return d
 end
 
 """
-Spawn horizons for all scenarios, terms and commodities on all procs.
-Some procs hold the master version of an horizon for one or more scenarios. 
-All other versions of the same horizon, are external observers, meaning we
-will update the master version and then make sure all observers on other procs
-get syncronized with the master version. 
+Spawn an empty Dict on each core. Will be used by
+other code to transfer data. E.g. price problems
+will write prices to the dict, and subsystem models
+will read and use these prices.
 """
-function _spawn_horizons(input, procs, proc_scenarios)
-    input_horizons = input[_JULES_HORIZONS]
-    output_horizons = Dict()
-    for term in keys(input_horizons)
-        if !haskey(output_horizons, term)
-            output_horizons[term] = Dict()
-        end
-        for commodity in keys(input_horizons[term])
-            if !haskey(output_horizons[term], commodity)
-                output_horizons[term][commodity] = Dict()
-            end
-            for own_p in procs
-                for (p, scenarios) in proc_scenarios
-                    for s in scenarios
-                        # get horizon dependent on proc ownership
-                        horizon = input_horizons[term][commodity]
-                        if p != own_p
-                            horizon = ExternalHorizon(horizon)
-                        end
-                        # store remote reference
-                        if !haskey(output_horizons[term][commodity], s)
-                            output_horizons[term][commodity][s] = Dict()
-                        end
-                        output_horizons[term][commodity][s][p] = @spawnat p horizon
-                    end
+function spawn_transfers(input::AbstractJulESInput)
+    cores = get_cores(input)
+    d = Dict()
+    for core in cores
+        d[core] = remotecall(Dict, core)
+    end
+    dictwait(d)
+    return d
+end
+
+"""
+Spawn horizons on all cores for all scenarios, terms and commodities.
+For each scenario, we turn off update! behaviour for all horizons 
+residing on other cores than the core housing the master version of 
+the horizon for the scenario in question. Instead, these horizons are 
+updated by other code in a way that keeps them in sync with the master 
+version of the horizon.
+"""
+function spawn_horizons(input::AbstractJulESInput)
+    d = Dict()
+    cores = get_cores(input)
+    horizons = get_horizons(input)
+    scenarios = get_scenarios(input)
+    for owncore in cores
+        d[owncore] = Dict()
+        for (scenario, core) in scenarios
+            for ((term, commodity), horizon) in horizons
+                horizon = deepcopy(horizon)
+                if owncore != core
+                    horizon = ExternalHorizon(horizon)
                 end
+                d[owncore][(scenario, term, commodity)] = @spawnat owncore horizon
             end
         end
     end
-    return output_horizons
+    dictwait(d)
+    return d
+end
+
+function default_init_problems(input::AbstractJulESInput, data::Dict)
+    problems = Dict()
+    problems[JULES_KEY_PRICEPROBLEMS] = spawn_price_problems(input, data)
+    problems[JULES_KEY_ENDVALUEPROBLEMS] = spawn_endvalue_problems(input, data)
+    problems[JULES_KEY_PLANNINGPROBLEMS] = spawn_planning_problems(input, data)
+    problems[JULES_KEY_CLEARINGPROBLEM] = spawn_clearing_problem(input, data)
+    return problems
+end
+
+function spawn_price_problems(input::AbstractJulESInput, data::Dict)
+    scenarios = data[JULES_KEY_SCENARIOS]
+    d = Dict()
+    for (scenario, core) in scenarios
+        d[scenario] = DefaultPriceProblem(scenario, core, data)
+    end
+    dictwait(d)
+    return d
+end
+
+function spawn_endvalue_problems(input::AbstractJulESInput, data::Dict)
+    scenarios = data[JULES_KEY_SCENARIOS]
+    subsystems = data[JULES_KEY_SUBSYSTEMS]
+    d = Dict()
+    for (scenario, core) in scenarios
+        for subsystem in keys(subsystems)
+            d[(scenario, subsystem)] = DefaultEndValueProblem(scenario, subsystem, core, data)
+        end 
+    end
+    dictwait(d)
+    return d
+end
+
+function spawn_planning_problems(input::AbstractJulESInput, data::Dict)
+    scenarios = data[JULES_KEY_SCENARIOS]
+    subsystems = data[JULES_KEY_SUBSYSTEMS]
+    d = Dict()
+    for (subsystem, cores) in subsystems
+        d[subsystem] = DefaultPlanningProblem(subsystem, cores, data)
+    end
+    dictwait(d)
+    return d
+end
+
+function spawn_clearing_problem(input::AbstractJulESInput, data::Dict)
+    core = first(get_cores(input))
+    problem = DefaultClearingProblem(core, data)
+    wait(problem)
+    return problem
+end
+
+function default_solve_step(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    solve_price_problems(output, data, problems, t, delta, i)
+    update_horizons(output, data, problems, t, delta, i)
+    transfer_prices(output, data, problems, t, delta, i)
+    solve_endvalue_problems(output, data, problems, t, delta, i)
+    transfer_endvalues(output, data, problems, t, delta, i)
+    solve_planning_problems(output, data, problems, t, delta, i)
+    transfer_cuts(output, data, problems, t, delta, i)
+    solve_clearing_problem(output, input, data, problems, t, delta, i)
+    transfer_state(output, data, problems, t, delta, i)
+    update_output(output, data, t, delta, i)
+end
+
+function solve_price_problems(output::AbstractJulESOutput, input::AbstractJulESInput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    _solve_dictproblems(problems, t, JULES_KEY_PRICEPROBLEMS)
+end
+
+function _solve_dictproblems(problems, t, key)
+    d = problems[key]
+    for problem in values(d)
+        solve(problem, t)
+    end
+    dictwait(d)
+    return
+end
+
+function update_horizons(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    # Copy changes in horizons (if any) to all observers
+    
+    # Need new horizon interface functions in 
+    # order to keep remote copies in sync
+    # have_changed(::Horizon) = false
+    # get_changes(::Horizon) = error()
+    # set_changes(::Horizon, changes::Dict) = error()
+
+    return
+end
+
+function transfer_prices(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    # write duals for 1:T to data on all cores for all scenarios
+    # write states for 1:T to data on all cores for all scenarios
+    return
+end
+
+function solve_endvalue_problems(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    _solve_dictproblems(problems, t, JULES_KEY_ENDVALUEPROBLEMS)
+end
+
+function transfer_endvalues(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    # write duals for endperiod(subsystem) to data on all cores for all scenarios and all subsystems
+    return
+end
+
+function solve_planning_problems(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    _solve_dictproblems(problems, t, JULES_KEY_PLANNINGPROBLEMS)
+end
+
+function transfer_cuts(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    # write cuts from masterproblem to transferdata[clearing_cuts] 
+    return
+end
+
+function solve_clearing_problem(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    problem = problems[JULES_KEY_CLEARINGPROBLEM]
+    solve(problem, t)
+    wait(problem)
+    return 
+end
+
+function transfer_state(output::AbstractJulESOutput, data::Dict, problems::Dict, t::TimeDelta, delta::Millisecond, i::Int)
+    # write startstates to transferdata[clearing_problem]
+    # write startstates to transferdata[price_problems]
+    # write startstates to transferdata[longterm_problems]
+    # write startstates to transferdata[planning_problems]
+    return
+end
+
+# objects needed in default implementation
+#   DefaultPriceProblem
+#   DefaultEndValueProblem
+#   DefaultPlanningProblem
+#   DefaultClearingProblem
+
+# methods needed to support default implementation
+"""
+Returns Tuple{DateTime, DateTime, Millisecond}
+"""
+function get_simulation_period(input::AbstractJulESInput)
+    error("Not implemented")
 end
 
 """
-With transfers, we mean transfers of data between optimization problems, residing on 
-possibly different procs. E.g. price prognosis problems generate prices for scenarios and areas 
-that we need to use as input in subsystem models. We store the same transfer data on each proc,
-and keep these syncronized. This simplifies moving subsystems around between procs 
-in order to balance loads. Model objects in optimization problems will
-have references to transfer data residing on the same proc.
+Returns Vector{Int} with cores 
 """
-function _spawn_transfers(input, procs, proc_scenarios, horizons)
-    transfers = Dict()
-
-    # used_prices for term, commodity, scenario
-    d = Dict()
-    for (term, commodity, scenario, area) in get_used_prices(input)
-        T = getnumperiods(input, term, commodity)
-        p = scenario_proc[scenario]
-        d[(term, commodity, scenario, area)] = remotecall(zeros, p, T)
-    end
-    transfers["used_prices"] = d
-
-    # price_startstates for term, commodity
-    d = Dict()
-    for (term, commodity, scenario, area) in get_price_startstates(input)
-        T = getnumperiods(input, term, commodity)
-        p = scenario_proc[scenario]
-        d[(term, commodity, scenario, area)] = remotecall(zeros, p, T)
-    end
-    transfers["used_prices"] = d
-
-    # price_endstates for term, commodity, scenario
-
-    # price_endvalues for term, commodity, scenario
-
-    # subsystem_endvalues for term, subsystem, scenario
-
-    # subsystem_endstats for term, subsystem, scenario
-
-    # subsystem_startstates for term, subsystem
-
-    # subsystem_cuts for subsystem, scenario
-
+function get_cores(input::AbstractJulESInput)
+    error("Not implemented")
 end
 
-function _remotebuild_problems(input, datasets, horizons, transfers)
+"""
+Returns Dict{Int, Int} with scenario and core 
+"""
+function get_scenarios(input::AbstractJulESInput)
+    error("Not implemented")
 end
 
-function _init_output(output, problems, datasets, proc_scenarios, horizons, transfers)
+"""
+Returns Dict{Int, Vector{Int}} with subsystem and cores per subsystem
+"""
+function get_subsystems(input::AbstractJulESInput)
+    error("Not implemented")
 end
 
-function _get_simulation_starttime(input)
-end
 
-function _get_simulation_steps(input)
-end
-
-function _get_simulation_delta(input)
-end
-
-function _solve_step!(output, t, step, delta, datasets, proc_scenarios, horizons, transfers, problems)
-    _solve_price_problems(output, problems, transfers)
-
-    _update_price_horizons(problems, horizons)
-
-    _transfer_price_horizons(problems, horizons)
-
-    _transfer_price_states(problems, states, horizons)
-
-    _solve_system_problems(output, problems, transfers)
-
-    _transfer_system_states(problems, states, horizons)
-
-    _solve_market_problem(output, problems, transfers)
-
-    _update_market_states(problems, states)
-end
